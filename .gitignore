@@ -1,0 +1,30 @@
+# 환경변수 (API 키 보호)
+.env
+.vtube_token
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+env/
+.venv/
+
+# 로그
+logs/
+*.log
+crash_log.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

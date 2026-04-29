@@ -1,0 +1,14 @@
+version: "3.9"
+
+services:
+  streamer:
+    build: .
+    container_name: ai_vtuber_streamer
+    restart: unless-stopped           # 1주일 무중단 운영
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs              # 로그 영속 저장
+      - ./.vtube_token:/app/.vtube_token  # VTube Studio 토큰 유지
+    network_mode: host                # VTube Studio (localhost:8001) 접근용
+    command: python run_forever.py

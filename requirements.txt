@@ -1,0 +1,7 @@
+anthropic>=0.40.0
+chzzkpy>=2.0.0
+elevenlabs>=1.0.0
+sounddevice>=0.5.0
+numpy>=1.24.0
+websockets>=12.0
+python-dotenv>=1.0.0
