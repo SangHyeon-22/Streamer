@@ -1,4 +1,4 @@
-anthropic>=0.40.0
+google-generativeai>=0.8.0
 chzzkpy>=2.0.0
 elevenlabs>=1.0.0
 sounddevice>=0.5.0
