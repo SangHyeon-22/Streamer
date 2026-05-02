@@ -1,64 +1,62 @@
 """
-ElevenLabs TTS 엔진
+Edge TTS 엔진 (Microsoft - 완전 무료, API 키 불필요)
 
-감정 태그에 따라 목소리 톤/속도/안정성이 달라짐
-- excited/laughing → 빠르고 불안정(더 표현적)
-- sad/crying       → 느리고 안정적(잔잔하게)
-- shy/sleepy       → 부드럽고 조용하게
-- angry/scared     → 강하고 불안정하게
+감정 태그에 따라 목소리 속도/피치가 달라짐
+- excited/laughing → 빠르고 높게
+- sad/crying       → 느리고 낮게
+- sleepy           → 매우 느리게
+- angry            → 빠르고 강하게
 """
 
 import os
 import io
 import asyncio
+import tempfile
 import sounddevice as sd
 import numpy as np
 from src.utils.logger import setup_logger
 
 logger = setup_logger()
 
-# ── 감정별 ElevenLabs Voice Settings ─────────────────────────
-# stability     : 0.0(표현적/불안정) ~ 1.0(안정적/단조)
-# similarity    : 원본 목소리 유사도
-# style         : 스타일 과장 (0.0 ~ 1.0)
-# speed         : 말하기 속도 (0.7 ~ 1.3)
+# ── 감정별 Edge TTS 음성 세팅 ────────────────────────────────
+# rate  : 속도 조절  (+20% = 20% 빠르게, -15% = 15% 느리게)
+# pitch : 피치 조절  (+3Hz = 높게, -3Hz = 낮게)
+# volume: 볼륨 조절  (+10% = 크게, -10% = 작게)
 EMOTION_VOICE_MAP: dict[str, dict] = {
-    "happy":     {"stability": 0.50, "similarity_boost": 0.80, "style": 0.55, "speed": 1.05},
-    "excited":   {"stability": 0.25, "similarity_boost": 0.75, "style": 0.85, "speed": 1.20},
-    "laughing":  {"stability": 0.15, "similarity_boost": 0.70, "style": 0.90, "speed": 1.15},
-    "proud":     {"stability": 0.60, "similarity_boost": 0.85, "style": 0.50, "speed": 1.00},
-    "sad":       {"stability": 0.80, "similarity_boost": 0.90, "style": 0.15, "speed": 0.82},
-    "crying":    {"stability": 0.70, "similarity_boost": 0.88, "style": 0.25, "speed": 0.78},
-    "lonely":    {"stability": 0.75, "similarity_boost": 0.88, "style": 0.18, "speed": 0.85},
-    "surprised": {"stability": 0.28, "similarity_boost": 0.78, "style": 0.75, "speed": 1.08},
-    "nervous":   {"stability": 0.35, "similarity_boost": 0.78, "style": 0.50, "speed": 1.05},
-    "scared":    {"stability": 0.30, "similarity_boost": 0.78, "style": 0.65, "speed": 1.12},
-    "angry":     {"stability": 0.28, "similarity_boost": 0.80, "style": 0.80, "speed": 1.10},
-    "disgusted": {"stability": 0.38, "similarity_boost": 0.80, "style": 0.60, "speed": 0.95},
-    "confused":  {"stability": 0.48, "similarity_boost": 0.80, "style": 0.42, "speed": 0.92},
-    "shy":       {"stability": 0.82, "similarity_boost": 0.90, "style": 0.18, "speed": 0.88},
-    "sleepy":    {"stability": 0.90, "similarity_boost": 0.92, "style": 0.08, "speed": 0.72},
-    "bored":     {"stability": 0.85, "similarity_boost": 0.90, "style": 0.10, "speed": 0.80},
-    "neutral":   {"stability": 0.60, "similarity_boost": 0.82, "style": 0.30, "speed": 1.00},
+    "happy":     {"rate": "+8%",  "pitch": "+1Hz",  "volume": "+0%"},
+    "excited":   {"rate": "+22%", "pitch": "+4Hz",  "volume": "+10%"},
+    "laughing":  {"rate": "+18%", "pitch": "+3Hz",  "volume": "+8%"},
+    "proud":     {"rate": "+5%",  "pitch": "+2Hz",  "volume": "+5%"},
+    "sad":       {"rate": "-18%", "pitch": "-3Hz",  "volume": "-5%"},
+    "crying":    {"rate": "-22%", "pitch": "-4Hz",  "volume": "-8%"},
+    "lonely":    {"rate": "-15%", "pitch": "-2Hz",  "volume": "-5%"},
+    "surprised": {"rate": "+15%", "pitch": "+5Hz",  "volume": "+8%"},
+    "nervous":   {"rate": "+10%", "pitch": "+1Hz",  "volume": "-5%"},
+    "scared":    {"rate": "+12%", "pitch": "+3Hz",  "volume": "-3%"},
+    "angry":     {"rate": "+15%", "pitch": "+2Hz",  "volume": "+10%"},
+    "disgusted": {"rate": "-5%",  "pitch": "-1Hz",  "volume": "+0%"},
+    "confused":  {"rate": "-8%",  "pitch": "+1Hz",  "volume": "+0%"},
+    "shy":       {"rate": "-10%", "pitch": "-1Hz",  "volume": "-8%"},
+    "sleepy":    {"rate": "-28%", "pitch": "-5Hz",  "volume": "-10%"},
+    "bored":     {"rate": "-15%", "pitch": "-2Hz",  "volume": "-5%"},
+    "neutral":   {"rate": "+0%",  "pitch": "+0Hz",  "volume": "+0%"},
 }
 
 
 class TTSEngine:
     def __init__(self):
-        self.api_key = os.getenv("ELEVENLABS_API_KEY")
-        self.voice_id = os.getenv("ELEVENLABS_VOICE_ID")
+        self.voice        = os.getenv("TTS_VOICE", "ko-KR-SunHiNeural")
         self.output_device = os.getenv("AUDIO_OUTPUT_DEVICE", "")
-        self.client = None
         self._device_index = None
 
     def setup(self):
         try:
-            from elevenlabs.client import ElevenLabs
-            self.client = ElevenLabs(api_key=self.api_key)
+            import edge_tts  # noqa: F401
             self._device_index = self._find_device()
-            logger.info(f"TTS 초기화 완료 (장치: {self.output_device or '기본값'})")
+            logger.info(f"Edge TTS 초기화 완료 (목소리: {self.voice})")
+            logger.info(f"오디오 출력: {self.output_device or '기본 장치'}")
         except ImportError:
-            logger.error("elevenlabs 미설치! `pip install elevenlabs` 필요")
+            logger.error("edge-tts 미설치! `pip install edge-tts` 필요")
             raise
 
     def _find_device(self) -> int | None:
@@ -68,55 +66,47 @@ class TTSEngine:
             if self.output_device.lower() in d["name"].lower() and d["max_output_channels"] > 0:
                 logger.info(f"오디오 장치: [{i}] {d['name']}")
                 return i
-        logger.warning(f"'{self.output_device}' 없음. 기본 장치 사용")
+        logger.warning(f"'{self.output_device}' 장치 없음 → 기본 장치 사용")
         return None
 
     async def speak(self, text: str, emotion: str = "neutral"):
-        """감정에 맞는 목소리 세팅으로 TTS 재생"""
-        if not self.client:
-            return
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._speak_sync, text, emotion)
-
-    def _speak_sync(self, text: str, emotion: str):
+        """감정에 맞는 목소리로 TTS 재생 (비동기)"""
         settings = EMOTION_VOICE_MAP.get(emotion, EMOTION_VOICE_MAP["neutral"])
         try:
-            from elevenlabs import VoiceSettings
-            audio_data = self.client.generate(
+            import edge_tts
+            communicate = edge_tts.Communicate(
                 text=text,
-                voice=self.voice_id,
-                model="eleven_multilingual_v2",
-                voice_settings=VoiceSettings(
-                    stability=settings["stability"],
-                    similarity_boost=settings["similarity_boost"],
-                    style=settings["style"],
-                    use_speaker_boost=True,
-                )
+                voice=self.voice,
+                rate=settings["rate"],
+                pitch=settings["pitch"],
+                volume=settings["volume"],
             )
-            audio_bytes = b"".join(audio_data)
-            audio_array, sample_rate = self._decode_audio(audio_bytes)
 
-            # speed 조절: 리샘플링으로 구현
-            target_speed = settings.get("speed", 1.0)
-            if target_speed != 1.0:
-                audio_array, sample_rate = self._adjust_speed(audio_array, sample_rate, target_speed)
+            # 메모리에 오디오 생성
+            audio_bytes = b""
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_bytes += chunk["data"]
 
-            sd.play(audio_array, samplerate=sample_rate, device=self._device_index)
-            sd.wait()
+            if not audio_bytes:
+                logger.warning("TTS 오디오 데이터 없음")
+                return
+
+            # 재생
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._play, audio_bytes)
             logger.debug(f"TTS [{emotion}] 재생 완료: {text[:30]}...")
+
         except Exception as e:
             logger.error(f"TTS 실패: {e}")
 
-    def _adjust_speed(self, audio: np.ndarray, sr: int, speed: float):
-        """속도 조절 - 샘플레이트 변조 방식 (간단하고 빠름)"""
-        new_sr = int(sr * speed)
-        return audio, new_sr
-
-    def _decode_audio(self, audio_bytes: bytes) -> tuple:
+    def _play(self, audio_bytes: bytes):
+        """bytes → numpy array 변환 후 재생"""
         try:
             import soundfile as sf
             data, sr = sf.read(io.BytesIO(audio_bytes), dtype="float32")
-            return data, sr
+            sd.play(data, samplerate=sr, device=self._device_index)
+            sd.wait()
         except Exception:
             try:
                 from pydub import AudioSegment
@@ -124,14 +114,24 @@ class TTSEngine:
                 samples = np.array(seg.get_array_of_samples(), dtype=np.float32) / 2**15
                 if seg.channels == 2:
                     samples = samples.reshape(-1, 2)
-                return samples, seg.frame_rate
+                sd.play(samples, samplerate=seg.frame_rate, device=self._device_index)
+                sd.wait()
             except Exception as e:
-                logger.error(f"오디오 디코딩 실패: {e}")
-                return np.zeros(1000, dtype=np.float32), 44100
+                logger.error(f"오디오 재생 실패: {e}")
 
     def list_devices(self):
+        """사용 가능한 오디오 출력 장치 출력"""
         print("\n=== 오디오 출력 장치 ===")
         for i, d in enumerate(sd.query_devices()):
             if d["max_output_channels"] > 0:
                 print(f"[{i}] {d['name']}")
-        print("AUDIO_OUTPUT_DEVICE=VoiceMeeter Input  ← .env에 이렇게 입력\n")
+        print("\n.env에 이렇게 입력:")
+        print("AUDIO_OUTPUT_DEVICE=VoiceMeeter Input\n")
+
+    def list_voices(self):
+        """사용 가능한 한국어 목소리 출력"""
+        print("\n=== 한국어 Edge TTS 목소리 ===")
+        print("ko-KR-SunHiNeural   - 여성 (밝고 또렷한)")
+        print("ko-KR-InJoonNeural  - 남성 (차분하고 안정적)")
+        print("\n.env에 이렇게 입력:")
+        print("TTS_VOICE=ko-KR-SunHiNeural\n")
