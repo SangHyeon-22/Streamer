@@ -3,7 +3,7 @@ AI 버튜버 스트리머 - 메인 진입점
 
 기능:
   - 치지직 채팅 수신 (멀티 배치 처리)
-  - Claude AI 응답 생성
+  - Groq AI 응답 생성 (llama-3.3-70b-versatile, 무료)
   - 감정별 TTS 목소리 변화
   - VTube Studio 표정/움직임 제어
   - 자체 콘텐츠 (TMI / 고민 상담 / 토크 주제)
@@ -19,12 +19,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from src.utils.logger import setup_logger
-from src.ai.brain import AIBrain
+from src.ai.brain import AIBrain, FALLBACK_TEXTS
 from src.chat.chzzk_client import ChzzkChatClient
 from src.chat.multi_handler import MultiChatHandler
 from src.voice.tts import TTSEngine
 from src.vtuber.vtube_studio import VTubeStudioClient
-from src.content.self_content import SelfContentEngine
+from src.content.self_content import SelfContentEngine, TMI_TOPICS
 from src.broadcast.routines import BroadcastRoutines
 
 logger = setup_logger()
@@ -37,7 +37,7 @@ async def main():
     logger.info("=" * 50)
 
     # ── 설정값 로드 ───────────────────────────────────────────
-    cooldown          = float(os.getenv("RESPONSE_COOLDOWN", "8"))
+    cooldown           = float(os.getenv("RESPONSE_COOLDOWN", "8"))
     soliloquy_interval = float(os.getenv("SOLILOQUY_INTERVAL", "120"))
     tmi_interval       = float(os.getenv("TMI_INTERVAL", "300"))
 
@@ -69,7 +69,10 @@ async def main():
     logger.info("메인 루프 시작 — 채팅 대기 중...")
 
     async def say(emotion: str, text: str):
-        """표정 + TTS 동시 실행 헬퍼"""
+        """표정 + TTS 동시 실행 헬퍼 (폴백 텍스트는 무시)"""
+        if not text or text in FALLBACK_TEXTS:
+            logger.debug(f"폴백 텍스트 무시: {text!r}")
+            return
         await vtube.trigger_emotion(emotion)
         await tts.speak(text, emotion)
 
@@ -109,20 +112,20 @@ async def main():
 
                 await say(emotion, response)
 
-                # 방송 로그 기록
-                for m in batch.messages:
-                    routines.log_exchange(m.username, m.content, response)
+                # 방송 로그 기록 (폴백이 아닐 때만)
+                if response not in FALLBACK_TEXTS:
+                    for m in batch.messages:
+                        routines.log_exchange(m.username, m.content, response)
 
                 last_response_time  = time.time()
                 last_soliloquy_time = time.time()
 
             else:
                 # ── 채팅 없을 때 자체 콘텐츠 ─────────────────
+                import random
 
                 # TMI 타임
                 if now - last_tmi_time >= tmi_interval:
-                    import random
-                    from src.content.self_content import TMI_TOPICS
                     topic = random.choice(TMI_TOPICS)
                     emotion, text = brain.generate_tmi(topic)
                     await say(emotion, text)
@@ -131,8 +134,6 @@ async def main():
 
                 # 독백 / 토크 주제 전환
                 elif now - last_soliloquy_time >= soliloquy_interval:
-                    # 50% 확률로 새 토크 주제, 50% 독백
-                    import random
                     if random.random() < 0.5:
                         emotion, text = brain.generate_topic_change()
                     else:

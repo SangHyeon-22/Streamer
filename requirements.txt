@@ -1,5 +1,5 @@
-google-generativeai>=0.8.0
-chzzkpy>=2.0.0
+groq>=0.8.0
+aiohttp>=3.9.0
 edge-tts>=6.1.0
 sounddevice>=0.5.0
 soundfile>=0.12.0
